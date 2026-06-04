@@ -1,0 +1,37 @@
+[package]
+name = "stun-rs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.76"
+license = "MIT OR Apache-2.0"
+description = "Pure-Rust STUN (RFC 5389 / RFC 8489) message codec with full ICE attribute coverage and a synchronous client over Network.framework UDP"
+authors = ["Per Johansson <per@doom.fish>"]
+homepage = "https://github.com/doom-fish/stun-rs"
+repository = "https://github.com/doom-fish/stun-rs"
+keywords = ["stun", "ice", "webrtc", "nat", "macos"]
+categories = ["network-programming", "os::macos-apis"]
+readme = "README.md"
+build = "build.rs"
+publish = false
+
+[lib]
+name = "stun"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]
+libc = "0.2"
+networkframework = { path = "../networkframework-rs" }
+cryptokit = { path = "../cryptokit-rs", package = "cryptokit-rs" }
+
+[[example]]
+name = "01_binding_request"
+path = "examples/01_binding_request.rs"
+
+[[example]]
+name = "02_stun_query"
+path = "examples/02_stun_query.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
