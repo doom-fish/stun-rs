@@ -40,7 +40,7 @@ impl TransactionId {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Rng`] if the system RNG fails.
+    /// Returns [`Error::Rng`](crate::Error::Rng) if the system RNG fails.
     pub fn try_random() -> Result<Self> {
         Ok(Self(rng::random_array::<TRANSACTION_ID_LEN>()?))
     }
