@@ -26,7 +26,10 @@ fn default_schedule_matches_rfc5389_section_7_2_1() {
 fn custom_rto_scales_every_wait() {
     let waits: Vec<Duration> = RetransmitSchedule::with_rto(Duration::from_millis(3)).collect();
     assert_eq!(waits.len(), 7);
-    assert_eq!(waits.iter().sum::<Duration>(), Duration::from_millis(3 * 79));
+    assert_eq!(
+        waits.iter().sum::<Duration>(),
+        Duration::from_millis(3 * 79)
+    );
 }
 
 #[test]

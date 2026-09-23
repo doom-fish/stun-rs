@@ -65,7 +65,11 @@ fn only_integrity_sha256_and_fingerprint_are_processed_after_message_integrity()
 
     let decoded = Message::decode(&message.encode()).unwrap();
     for view in [&message, &decoded] {
-        let processed: Vec<u16> = view.attributes().iter().map(Attribute::attribute_type).collect();
+        let processed: Vec<u16> = view
+            .attributes()
+            .iter()
+            .map(Attribute::attribute_type)
+            .collect();
         assert_eq!(
             processed,
             [
@@ -99,7 +103,10 @@ fn message_integrity_after_message_integrity_sha256_is_ignored() {
     let decoded = Message::decode(&message.encode()).unwrap();
     assert_eq!(
         decoded.ignored_attributes(),
-        &[Attribute::Priority(9), Attribute::MessageIntegrity([0u8; 20])]
+        &[
+            Attribute::Priority(9),
+            Attribute::MessageIntegrity([0u8; 20])
+        ]
     );
     assert!(decoded.get(types::MESSAGE_INTEGRITY).is_none());
     assert!(matches!(

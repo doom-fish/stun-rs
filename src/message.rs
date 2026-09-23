@@ -260,9 +260,10 @@ impl Message {
     #[allow(missing_docs)]
     #[must_use]
     pub fn unknown_attribute_response(&self, unknown: &[u16]) -> MessageBuilder {
+        let error = ErrorCode::new(420, "Unknown Attribute");
         Self::builder(self.method(), Class::ErrorResponse)
             .transaction_id(self.transaction_id)
-            .attribute(Attribute::ErrorCode(ErrorCode::new(420, "Unknown Attribute")))
+            .attribute(Attribute::ErrorCode(error))
             .attribute(Attribute::UnknownAttributes(unknown.to_vec()))
     }
 
@@ -357,9 +358,12 @@ impl Message {
     /// Returns [`Error::MalformedAttribute`] if no `MESSAGE-INTEGRITY`
     /// attribute is present, or [`Error::IntegrityMismatch`] on mismatch.
     pub fn verify_message_integrity(&self, key: &[u8]) -> Result<()> {
-        self.verify_integrity(types::MESSAGE_INTEGRITY, integrity::SHA1_LEN, key, &|k, d| {
-            Ok(integrity::hmac_sha1(k, d).to_vec())
-        })
+        self.verify_integrity(
+            types::MESSAGE_INTEGRITY,
+            integrity::SHA1_LEN,
+            key,
+            &|k, d| Ok(integrity::hmac_sha1(k, d).to_vec()),
+        )
     }
 
     /// Verify a `MESSAGE-INTEGRITY-SHA256` attribute against `key`.
@@ -616,14 +620,15 @@ impl MessageBuilder {
         let mut wire = self.attributes;
 
         if let Some(mi_key) = &self.mi_sha1_key {
-            let prefix =
-                encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA1_LEN)?;
-            wire.push(Attribute::MessageIntegrity(integrity::hmac_sha1(mi_key, &prefix)));
+            let pending = 4 + integrity::SHA1_LEN;
+            let prefix = encode_prefix(message_type, &transaction_id, &wire, pending)?;
+            let mac = integrity::hmac_sha1(mi_key, &prefix);
+            wire.push(Attribute::MessageIntegrity(mac));
         }
 
         if let Some(mi_key) = &self.mi_sha256_key {
-            let prefix =
-                encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA256_LEN)?;
+            let pending = 4 + integrity::SHA256_LEN;
+            let prefix = encode_prefix(message_type, &transaction_id, &wire, pending)?;
             let mac = integrity::hmac_sha256(mi_key, &prefix)?;
             wire.push(Attribute::MessageIntegritySha256(mac.to_vec()));
         }

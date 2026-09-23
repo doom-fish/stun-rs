@@ -29,13 +29,19 @@ fn message(attributes: &[Vec<u8>]) -> Vec<u8> {
 fn message_length_must_be_a_multiple_of_four() {
     let mut unpadded = header(7);
     unpadded.extend_from_slice(&[0x80, 0x22, 0x00, 0x03, b'a', b'b', b'c']);
-    assert!(matches!(Message::decode(&unpadded), Err(Error::BadMessageLength)));
+    assert!(matches!(
+        Message::decode(&unpadded),
+        Err(Error::BadMessageLength)
+    ));
 
     let valid = message(&[with_value_len(types::SOFTWARE, b"abc")]);
     let mut stretched = valid;
     stretched.extend_from_slice(&[0, 0]);
     stretched[2..4].copy_from_slice(&10u16.to_be_bytes());
-    assert!(matches!(Message::decode(&stretched), Err(Error::BadMessageLength)));
+    assert!(matches!(
+        Message::decode(&stretched),
+        Err(Error::BadMessageLength)
+    ));
 }
 
 #[test]
@@ -44,7 +50,10 @@ fn fingerprint_must_be_the_last_attribute() {
         with_value_len(types::FINGERPRINT, &[0, 0, 0, 0]),
         with_value_len(types::SOFTWARE, b"after"),
     ]);
-    assert!(matches!(Message::decode(&bytes), Err(Error::MalformedAttribute(_))));
+    assert!(matches!(
+        Message::decode(&bytes),
+        Err(Error::MalformedAttribute(_))
+    ));
 
     let built = Message::builder(Method::Binding, Class::Request)
         .attribute(Attribute::Fingerprint(0))
@@ -62,11 +71,17 @@ fn fingerprint_must_be_the_last_attribute() {
 #[test]
 fn message_integrity_sha256_length_follows_rfc8489() {
     for len in [16usize, 20, 28, 32] {
-        let bytes = message(&[with_value_len(types::MESSAGE_INTEGRITY_SHA256, &vec![0; len])]);
+        let bytes = message(&[with_value_len(
+            types::MESSAGE_INTEGRITY_SHA256,
+            &vec![0; len],
+        )]);
         assert!(Message::decode(&bytes).is_ok(), "length {len}");
     }
     for len in [1usize, 12, 15, 18, 33, 36] {
-        let bytes = message(&[with_value_len(types::MESSAGE_INTEGRITY_SHA256, &vec![0; len])]);
+        let bytes = message(&[with_value_len(
+            types::MESSAGE_INTEGRITY_SHA256,
+            &vec![0; len],
+        )]);
         assert!(
             matches!(Message::decode(&bytes), Err(Error::MalformedAttribute(_))),
             "length {len}"
@@ -111,12 +126,27 @@ fn builder_rejects_a_message_longer_than_the_length_field() {
 fn unknown_comprehension_required_attributes_are_reported_once() {
     let request = Message::builder(Method::Binding, Class::Request)
         .transaction_id(TransactionId::from_bytes([3u8; 12]))
-        .attribute(Attribute::Unknown { attribute_type: 0x7f00, value: vec![1] })
-        .attribute(Attribute::Unknown { attribute_type: 0x8fff, value: vec![2] })
-        .attribute(Attribute::Unknown { attribute_type: 0x7f00, value: vec![3] })
-        .attribute(Attribute::Unknown { attribute_type: 0x0033, value: vec![] })
+        .attribute(Attribute::Unknown {
+            attribute_type: 0x7f00,
+            value: vec![1],
+        })
+        .attribute(Attribute::Unknown {
+            attribute_type: 0x8fff,
+            value: vec![2],
+        })
+        .attribute(Attribute::Unknown {
+            attribute_type: 0x7f00,
+            value: vec![3],
+        })
+        .attribute(Attribute::Unknown {
+            attribute_type: 0x0033,
+            value: vec![],
+        })
         .attribute(Attribute::MessageIntegrity([0; 20]))
-        .attribute(Attribute::Unknown { attribute_type: 0x7f01, value: vec![] })
+        .attribute(Attribute::Unknown {
+            attribute_type: 0x7f01,
+            value: vec![],
+        })
         .build()
         .unwrap();
     let decoded = Message::decode(&request.encode()).unwrap();
@@ -134,7 +164,10 @@ fn unknown_comprehension_required_attributes_are_reported_once() {
 fn unknown_attribute_response_is_a_420_error_for_the_same_transaction() {
     let request = Message::builder(Method::Binding, Class::Request)
         .transaction_id(TransactionId::from_bytes([9u8; 12]))
-        .attribute(Attribute::Unknown { attribute_type: 0x7f00, value: vec![] })
+        .attribute(Attribute::Unknown {
+            attribute_type: 0x7f00,
+            value: vec![],
+        })
         .build()
         .unwrap();
     let unknown = request.unknown_comprehension_required();
@@ -151,7 +184,10 @@ fn unknown_attribute_response_is_a_420_error_for_the_same_transaction() {
     assert_eq!(decoded.transaction_id(), request.transaction_id());
     assert_eq!(
         decoded.get(types::ERROR_CODE),
-        Some(&Attribute::ErrorCode(ErrorCode::new(420, "Unknown Attribute")))
+        Some(&Attribute::ErrorCode(ErrorCode::new(
+            420,
+            "Unknown Attribute"
+        )))
     );
     assert_eq!(
         decoded.get(types::UNKNOWN_ATTRIBUTES),
@@ -168,7 +204,11 @@ fn builder_draws_a_random_transaction_id_only_when_none_is_set() {
         .unwrap();
     assert_eq!(set.transaction_id(), &fixed);
 
-    let first = Message::builder(Method::Binding, Class::Request).build().unwrap();
-    let second = Message::builder(Method::Binding, Class::Request).build().unwrap();
+    let first = Message::builder(Method::Binding, Class::Request)
+        .build()
+        .unwrap();
+    let second = Message::builder(Method::Binding, Class::Request)
+        .build()
+        .unwrap();
     assert_ne!(first.transaction_id(), second.transaction_id());
 }

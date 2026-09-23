@@ -303,7 +303,7 @@ fn match_response(datagram: &[u8], expected: &TransactionId) -> Option<Result<Ma
     if message.transaction_id() != expected || message.method() != Method::Binding {
         return None;
     }
-    if !matches!(message.class(), Class::SuccessResponse | Class::ErrorResponse) {
+    if matches!(message.class(), Class::Request | Class::Indication) {
         return None;
     }
     if message.get(types::FINGERPRINT).is_some() && message.verify_fingerprint().is_err() {

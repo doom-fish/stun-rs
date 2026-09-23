@@ -53,7 +53,11 @@ fn answer_with(
 fn bind_returns_the_address_the_server_saw() {
     let (socket, endpoint) = server();
     let server = answer_with(socket, |socket, request, peer| {
-        let reply = response(request, Class::SuccessResponse, vec![Attribute::XorMappedAddress(peer)]);
+        let reply = response(
+            request,
+            Class::SuccessResponse,
+            vec![Attribute::XorMappedAddress(peer)],
+        );
         socket.send_to(&reply, peer).unwrap();
     });
     let mapped = fast_client().bind(&endpoint).unwrap();
@@ -76,7 +80,11 @@ fn unrelated_datagrams_do_not_use_up_retransmissions() {
             socket.send_to(&echoed_request, peer).unwrap();
         }
         thread::sleep(Duration::from_millis(150));
-        let reply = response(request, Class::SuccessResponse, vec![Attribute::XorMappedAddress(peer)]);
+        let reply = response(
+            request,
+            Class::SuccessResponse,
+            vec![Attribute::XorMappedAddress(peer)],
+        );
         socket.send_to(&reply, peer).unwrap();
     });
     let mapped = fast_client().bind(&endpoint).unwrap();
@@ -116,7 +124,10 @@ fn error_response_without_error_code_fails() {
     });
     let result = fast_client().bind(&endpoint);
     server.join().unwrap();
-    assert!(matches!(result, Err(Error::MalformedAttribute(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(Error::MalformedAttribute(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -127,11 +138,17 @@ fn a_response_from_another_address_is_not_accepted() {
         let forged = response(
             request,
             Class::SuccessResponse,
-            vec![Attribute::XorMappedAddress("203.0.113.9:1".parse().unwrap())],
+            vec![Attribute::XorMappedAddress(
+                "203.0.113.9:1".parse().unwrap(),
+            )],
         );
         stray.send_to(&forged, peer).unwrap();
         thread::sleep(Duration::from_millis(100));
-        let reply = response(request, Class::SuccessResponse, vec![Attribute::XorMappedAddress(peer)]);
+        let reply = response(
+            request,
+            Class::SuccessResponse,
+            vec![Attribute::XorMappedAddress(peer)],
+        );
         socket.send_to(&reply, peer).unwrap();
     });
     let mapped = fast_client().bind(&endpoint).unwrap();
@@ -169,7 +186,10 @@ fn silent_server_times_out_after_seven_requests_and_the_socket_is_closed() {
         Err(error) => refused(&error),
         Ok(_) => matches!(socket.recv(&mut buf), Err(ref error) if refused(error)),
     });
-    assert!(closed, "the client socket is still open after bind returned");
+    assert!(
+        closed,
+        "the client socket is still open after bind returned"
+    );
 }
 
 #[test]
@@ -181,8 +201,14 @@ fn unknown_comprehension_required_attribute_fails_the_transaction() {
             Class::SuccessResponse,
             vec![
                 Attribute::XorMappedAddress(peer),
-                Attribute::Unknown { attribute_type: 0x7f00, value: vec![1, 2, 3, 4] },
-                Attribute::Unknown { attribute_type: 0x8f00, value: vec![5] },
+                Attribute::Unknown {
+                    attribute_type: 0x7f00,
+                    value: vec![1, 2, 3, 4],
+                },
+                Attribute::Unknown {
+                    attribute_type: 0x8f00,
+                    value: vec![5],
+                },
             ],
         );
         socket.send_to(&reply, peer).unwrap();
@@ -205,8 +231,14 @@ fn rfc3489_source_and_changed_address_are_tolerated() {
             Class::SuccessResponse,
             vec![
                 Attribute::MappedAddress(peer),
-                Attribute::Unknown { attribute_type: 0x0004, value: legacy_address.clone() },
-                Attribute::Unknown { attribute_type: 0x0005, value: legacy_address },
+                Attribute::Unknown {
+                    attribute_type: 0x0004,
+                    value: legacy_address.clone(),
+                },
+                Attribute::Unknown {
+                    attribute_type: 0x0005,
+                    value: legacy_address,
+                },
             ],
         );
         socket.send_to(&reply, peer).unwrap();
@@ -220,7 +252,11 @@ fn oversized_datagrams_are_skipped() {
     let (socket, endpoint) = server();
     let server = answer_with(socket, |socket, request, peer| {
         socket.send_to(&[0u8; 3000], peer).unwrap();
-        let reply = response(request, Class::SuccessResponse, vec![Attribute::XorMappedAddress(peer)]);
+        let reply = response(
+            request,
+            Class::SuccessResponse,
+            vec![Attribute::XorMappedAddress(peer)],
+        );
         socket.send_to(&reply, peer).unwrap();
     });
     let mapped = fast_client().bind(&endpoint).unwrap();
@@ -231,10 +267,17 @@ fn oversized_datagrams_are_skipped() {
 fn success_response_without_a_mapped_address_fails() {
     let (socket, endpoint) = server();
     let server = answer_with(socket, |socket, request, peer| {
-        let reply = response(request, Class::SuccessResponse, vec![Attribute::Software("x".into())]);
+        let reply = response(
+            request,
+            Class::SuccessResponse,
+            vec![Attribute::Software("x".into())],
+        );
         socket.send_to(&reply, peer).unwrap();
     });
     let result = fast_client().bind(&endpoint);
     server.join().unwrap();
-    assert!(matches!(result, Err(Error::MalformedAttribute(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(Error::MalformedAttribute(_))),
+        "{result:?}"
+    );
 }
