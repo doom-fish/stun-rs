@@ -10,7 +10,7 @@ fn roundtrip(attrs: Vec<Attribute>) -> Vec<Attribute> {
     for a in attrs {
         builder = builder.attribute(a);
     }
-    let bytes = builder.build().encode();
+    let bytes = builder.build().unwrap().encode();
     let decoded = Message::decode(&bytes).expect("decode");
     decoded.attributes().to_vec()
 }

@@ -51,7 +51,8 @@ let message = Message::builder(Method::Binding, Class::Request)
     .attribute(Attribute::Priority(0x6e00_01ff))
     .with_message_integrity_sha1(&key)
     .with_fingerprint()
-    .build();
+    .build()
+    .unwrap();
 
 let bytes = message.encode();
 let decoded = Message::decode(&bytes).unwrap();

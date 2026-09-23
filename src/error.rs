@@ -32,6 +32,8 @@ pub enum Error {
     Network(String),
     /// The system RNG failed while generating a transaction ID.
     Rng,
+    #[allow(missing_docs)]
+    Crypto(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -52,6 +54,7 @@ impl fmt::Display for Error {
             Self::Timeout => f.write_str("STUN transaction timed out"),
             Self::Network(msg) => write!(f, "network error: {msg}"),
             Self::Rng => f.write_str("secure RNG failed"),
+            Self::Crypto(what) => write!(f, "platform crypto error: {what}"),
         }
     }
 }

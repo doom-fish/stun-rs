@@ -9,6 +9,7 @@ fn valid_message() -> Vec<u8> {
         .with_message_integrity_sha1(b"secret")
         .with_fingerprint()
         .build()
+        .unwrap()
         .encode()
 }
 
@@ -100,6 +101,7 @@ fn missing_integrity_attribute() {
     let bytes = Message::builder(Method::Binding, Class::Request)
         .transaction_id(TransactionId::from_bytes([0u8; 12]))
         .build()
+        .unwrap()
         .encode();
     let msg = Message::decode(&bytes).unwrap();
     assert!(matches!(

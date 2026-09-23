@@ -104,7 +104,8 @@ fn sample_request() {
         .attribute(Attribute::Username("evtj:h6vY".to_owned()))
         .with_message_integrity_sha1(&key)
         .with_fingerprint()
-        .build();
+        .build()
+        .unwrap();
     rebuilt.verify_message_integrity(&key).unwrap();
     rebuilt.verify_fingerprint().unwrap();
 }
@@ -291,6 +292,7 @@ fn sample_long_term_auth() {
         .attribute(Attribute::Nonce(nonce.to_owned()))
         .attribute(Attribute::Realm(realm.to_owned()))
         .with_message_integrity_sha1(&key)
-        .build();
+        .build()
+        .unwrap();
     assert_eq!(rebuilt.encode(), bytes, "rebuilt long-term request bytes");
 }

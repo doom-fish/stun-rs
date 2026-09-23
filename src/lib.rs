@@ -35,7 +35,8 @@
 //!     .attribute(Attribute::Software("doomfish-stun/0.1".into()))
 //!     .with_message_integrity_sha1(b"ice-password")
 //!     .with_fingerprint()
-//!     .build();
+//!     .build()
+//!     .unwrap();
 //! let bytes = request.encode();
 //!
 //! // Decode it again.

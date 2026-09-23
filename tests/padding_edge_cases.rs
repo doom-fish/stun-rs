@@ -8,6 +8,7 @@ fn encode(attr: Attribute) -> Vec<u8> {
         .transaction_id(TransactionId::from_bytes([0u8; 12]))
         .attribute(attr)
         .build()
+        .unwrap()
         .encode()
 }
 
@@ -74,7 +75,8 @@ fn padding_survives_roundtrip() {
         let msg = Message::builder(Method::Binding, Class::Request)
             .transaction_id(TransactionId::from_bytes([3u8; 12]))
             .attribute(Attribute::Software(s.clone()))
-            .build();
+            .build()
+            .unwrap();
         let decoded = Message::decode(&msg.encode()).unwrap();
         assert_eq!(decoded.attributes(), &[Attribute::Software(s)]);
     }

@@ -179,7 +179,7 @@ impl StunClient {
     /// * Decoding errors if the response is malformed.
     pub fn bind(&self, server: &Endpoint) -> Result<MappedAddress> {
         let transaction_id = TransactionId::random();
-        let request = self.build_request(transaction_id);
+        let request = self.build_request(transaction_id)?;
 
         let socket = UdpClient::connect(server.host(), server.port())
             .map_err(|e| Error::Network(e.to_string()))?;
@@ -213,7 +213,7 @@ impl StunClient {
     }
 
     /// Build the Binding request bytes for a given transaction ID.
-    fn build_request(&self, transaction_id: TransactionId) -> Vec<u8> {
+    fn build_request(&self, transaction_id: TransactionId) -> Result<Vec<u8>> {
         let mut builder = Message::builder(Method::Binding, Class::Request).transaction_id(transaction_id);
         if let Some(software) = &self.software {
             builder = builder.attribute(Attribute::Software(software.clone()));

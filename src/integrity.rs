@@ -11,6 +11,7 @@
 use cryptokit::hmac::hmac_sha256 as ck_hmac_sha256;
 use cryptokit::symmetric::SymmetricKey;
 
+use crate::error::{Error, Result};
 use crate::ffi::commoncrypto;
 
 /// Byte length of an HMAC-SHA1 value.
@@ -27,19 +28,16 @@ pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; SHA1_LEN] {
 
 /// Compute `HMAC-SHA256(key, data)`.
 ///
-/// CryptoKit's HMAC bridge never fails for valid inputs, but it returns a
-/// `Result`; if the bridge ever reports an error we fall back to an all-zero
-/// MAC, which will simply fail any subsequent verification.
-#[must_use]
-pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; SHA256_LEN] {
+/// # Errors
+///
+/// Returns [`Error::Crypto`] if the CryptoKit bridge fails; no MAC is
+/// produced in that case.
+pub fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<[u8; SHA256_LEN]> {
     let symmetric = SymmetricKey::from_bytes(key.to_vec());
-    let mut out = [0u8; SHA256_LEN];
-    if let Ok(mac) = ck_hmac_sha256(data, &symmetric) {
-        if mac.as_bytes().len() == SHA256_LEN {
-            out.copy_from_slice(mac.as_bytes());
-        }
-    }
-    out
+    let mac = ck_hmac_sha256(data, &symmetric).map_err(|_| Error::Crypto("HMAC-SHA256 failed"))?;
+    mac.as_bytes()
+        .try_into()
+        .map_err(|_| Error::Crypto("HMAC-SHA256 returned an unexpected length"))
 }
 
 /// Constant-time comparison of two byte slices of equal meaning.

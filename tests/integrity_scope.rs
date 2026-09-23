@@ -24,6 +24,7 @@ fn signed_check(key: &[u8]) -> Vec<u8> {
         .with_message_integrity_sha1(key)
         .with_fingerprint()
         .build()
+        .unwrap()
         .encode()
 }
 
@@ -59,7 +60,8 @@ fn only_integrity_sha256_and_fingerprint_are_processed_after_message_integrity()
         .attribute(Attribute::MessageIntegritySha256(vec![0u8; 32]))
         .attribute(Attribute::UseCandidate)
         .with_fingerprint()
-        .build();
+        .build()
+        .unwrap();
 
     let decoded = Message::decode(&message.encode()).unwrap();
     for view in [&message, &decoded] {
@@ -91,7 +93,8 @@ fn message_integrity_after_message_integrity_sha256_is_ignored() {
         .attribute(Attribute::Priority(9))
         .attribute(Attribute::MessageIntegrity([0u8; 20]))
         .with_fingerprint()
-        .build();
+        .build()
+        .unwrap();
 
     let decoded = Message::decode(&message.encode()).unwrap();
     assert_eq!(
@@ -113,6 +116,7 @@ fn a_second_message_integrity_is_ignored_and_the_first_is_verified() {
         .attribute(Attribute::Software("server".to_owned()))
         .with_message_integrity_sha1(&key)
         .build()
+        .unwrap()
         .encode();
 
     let mut forged = genuine;

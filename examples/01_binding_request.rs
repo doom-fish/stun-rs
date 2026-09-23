@@ -30,7 +30,8 @@ fn main() {
         .attribute(Attribute::IceControlling(0x932f_f9b1_5126_3b36))
         .with_message_integrity_sha1(&key)
         .with_fingerprint()
-        .build();
+        .build()
+        .expect("valid message");
 
     let bytes = message.encode();
 

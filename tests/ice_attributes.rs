@@ -8,6 +8,7 @@ fn encode_single(attr: Attribute) -> Vec<u8> {
         .transaction_id(TransactionId::from_bytes([0u8; 12]))
         .attribute(attr)
         .build()
+        .unwrap()
         .encode()
 }
 
@@ -51,7 +52,8 @@ fn ice_attributes_roundtrip() {
         .attribute(Attribute::Priority(0x7eff_fffe))
         .attribute(Attribute::UseCandidate)
         .attribute(Attribute::IceControlling(0xdead_beef_cafe_babe))
-        .build();
+        .build()
+        .unwrap();
     let decoded = Message::decode(&msg.encode()).unwrap();
     assert_eq!(
         decoded.attributes(),

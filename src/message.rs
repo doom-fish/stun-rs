@@ -15,7 +15,7 @@ pub const MAGIC_COOKIE: u32 = 0x2112_A442;
 pub const HEADER_LEN: usize = 20;
 
 /// A keyed message-authentication function `(key, data) -> mac`.
-type MacFn<'a> = &'a dyn Fn(&[u8], &[u8]) -> Vec<u8>;
+type MacFn<'a> = &'a dyn Fn(&[u8], &[u8]) -> Result<Vec<u8>>;
 
 /// The STUN method (the operation being performed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -319,7 +319,7 @@ impl Message {
     /// attribute is present, or [`Error::IntegrityMismatch`] on mismatch.
     pub fn verify_message_integrity(&self, key: &[u8]) -> Result<()> {
         self.verify_integrity(types::MESSAGE_INTEGRITY, integrity::SHA1_LEN, key, &|k, d| {
-            integrity::hmac_sha1(k, d).to_vec()
+            Ok(integrity::hmac_sha1(k, d).to_vec())
         })
     }
 
@@ -327,14 +327,15 @@ impl Message {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MalformedAttribute`] if absent, or
-    /// [`Error::IntegrityMismatch`] on mismatch.
+    /// Returns [`Error::MalformedAttribute`] if absent,
+    /// [`Error::IntegrityMismatch`] on mismatch, or [`Error::Crypto`] if the
+    /// HMAC cannot be computed.
     pub fn verify_message_integrity_sha256(&self, key: &[u8]) -> Result<()> {
         self.verify_integrity(
             types::MESSAGE_INTEGRITY_SHA256,
             integrity::SHA256_LEN,
             key,
-            &|k, d| integrity::hmac_sha256(k, d).to_vec(),
+            &|k, d| Ok(integrity::hmac_sha256(k, d)?.to_vec()),
         )
     }
 
@@ -402,7 +403,7 @@ impl Message {
         let synthetic_len = (attr_start - HEADER_LEN) + 4 + attr_value_len;
         write_length(&mut prefix, synthetic_len);
 
-        let computed = mac_fn(key, &prefix);
+        let computed = mac_fn(key, &prefix)?;
         let stored = &raw[value_start..value_start + value_len];
         if constant_time_eq(&computed, stored) {
             Ok(())
@@ -534,8 +535,7 @@ impl MessageBuilder {
 
     /// Finalize into a [`Message`]. Integrity and fingerprint attributes (if
     /// requested) are computed and appended in RFC-mandated order.
-    #[must_use]
-    pub fn build(self) -> Message {
+    pub fn build(self) -> Result<Message> {
         let message_type = self.message_type;
         let transaction_id = self.transaction_id;
         let mut wire = self.attributes;
@@ -548,7 +548,7 @@ impl MessageBuilder {
         if let Some(mi_key) = &self.mi_sha256_key {
             let prefix =
                 encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA256_LEN);
-            let mac = integrity::hmac_sha256(mi_key, &prefix);
+            let mac = integrity::hmac_sha256(mi_key, &prefix)?;
             wire.push(Attribute::MessageIntegritySha256(mac.to_vec()));
         }
 
@@ -559,18 +559,17 @@ impl MessageBuilder {
 
         let raw = encode_prefix(message_type, &transaction_id, &wire, 0);
         let (attributes, ignored) = split_processed(wire);
-        Message {
+        Ok(Message {
             message_type,
             transaction_id,
             attributes,
             ignored,
             raw,
-        }
+        })
     }
 
     /// Convenience: build and immediately encode to bytes.
-    #[must_use]
-    pub fn build_and_encode(self) -> Vec<u8> {
-        self.build().encode()
+    pub fn build_and_encode(self) -> Result<Vec<u8>> {
+        Ok(self.build()?.encode())
     }
 }
