@@ -127,7 +127,8 @@ pub struct Message {
     message_type: MessageType,
     transaction_id: TransactionId,
     attributes: Vec<Attribute>,
-    raw: Option<Vec<u8>>,
+    ignored: Vec<Attribute>,
+    raw: Vec<u8>,
 }
 
 impl PartialEq for Message {
@@ -135,10 +136,49 @@ impl PartialEq for Message {
         self.message_type == other.message_type
             && self.transaction_id == other.transaction_id
             && self.attributes == other.attributes
+            && self.ignored == other.ignored
     }
 }
 
 impl Eq for Message {}
+
+#[derive(Clone, Copy)]
+enum Scope {
+    Open,
+    AfterIntegrity,
+    AfterIntegritySha256,
+}
+
+impl Scope {
+    fn admit(&mut self, attribute_type: u16) -> bool {
+        match (*self, attribute_type) {
+            (Self::Open, types::MESSAGE_INTEGRITY) => {
+                *self = Self::AfterIntegrity;
+                true
+            }
+            (Self::Open | Self::AfterIntegrity, types::MESSAGE_INTEGRITY_SHA256) => {
+                *self = Self::AfterIntegritySha256;
+                true
+            }
+            (Self::Open, _) | (_, types::FINGERPRINT) => true,
+            _ => false,
+        }
+    }
+}
+
+fn split_processed(wire: Vec<Attribute>) -> (Vec<Attribute>, Vec<Attribute>) {
+    let mut scope = Scope::Open;
+    wire.into_iter()
+        .partition(|attribute| scope.admit(attribute.attribute_type()))
+}
+
+/// The 16-byte XOR key for a message (`magic-cookie || transaction-id`).
+fn xor_key(transaction_id: &TransactionId) -> XorKey {
+    let mut key = [0u8; 16];
+    key[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
+    key[4..16].copy_from_slice(transaction_id.as_bytes());
+    key
+}
 
 impl Message {
     /// Start building a new message with the given method and class.
@@ -171,13 +211,23 @@ impl Message {
         &self.transaction_id
     }
 
-    /// The decoded attributes, in wire order.
+    /// The attributes a receiver processes, in wire order: attributes that
+    /// follow `MESSAGE-INTEGRITY` or `MESSAGE-INTEGRITY-SHA256` are left out,
+    /// except those RFC 8489 §9 allows there (see
+    /// [`Message::ignored_attributes`]).
     #[must_use]
     pub fn attributes(&self) -> &[Attribute] {
         &self.attributes
     }
 
-    /// Find the first attribute of the given type, if present.
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn ignored_attributes(&self) -> &[Attribute] {
+        &self.ignored
+    }
+
+    /// Find the first processed attribute of the given type, if present (see
+    /// [`Message::attributes`]).
     #[must_use]
     pub fn get(&self, attribute_type: u16) -> Option<&Attribute> {
         self.attributes
@@ -185,40 +235,11 @@ impl Message {
             .find(|a| a.attribute_type() == attribute_type)
     }
 
-    /// The 16-byte XOR key for this message (`magic-cookie || transaction-id`).
-    #[must_use]
-    fn xor_key(&self) -> XorKey {
-        let mut key = [0u8; 16];
-        key[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
-        key[4..16].copy_from_slice(self.transaction_id.as_bytes());
-        key
-    }
-
-    /// Encode this message to its on-the-wire byte representation.
-    ///
-    /// Attributes are emitted in the order they were added. Any
-    /// `MESSAGE-INTEGRITY`, `MESSAGE-INTEGRITY-SHA256`, or `FINGERPRINT`
-    /// attributes present are encoded verbatim; use [`MessageBuilder`] to have
-    /// them computed for you.
+    /// The on-the-wire bytes of this message: the bytes it was decoded from,
+    /// or the encoding produced by [`MessageBuilder`].
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let key = self.xor_key();
-        let mut out = Vec::with_capacity(HEADER_LEN + 64);
-        self.write_header(&mut out, 0);
-        for attr in &self.attributes {
-            attr.encode(&key, &mut out);
-        }
-        let body_len = out.len() - HEADER_LEN;
-        write_length(&mut out, body_len);
-        out
-    }
-
-    /// Write the 20-byte header with a placeholder body `length`.
-    fn write_header(&self, out: &mut Vec<u8>, length: usize) {
-        out.extend_from_slice(&self.message_type.to_u16().to_be_bytes());
-        out.extend_from_slice(&u16::try_from(length).unwrap_or(0).to_be_bytes());
-        out.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
-        out.extend_from_slice(self.transaction_id.as_bytes());
+        self.raw.clone()
     }
 
     /// Decode a STUN message from bytes.
@@ -248,11 +269,11 @@ impl Message {
             .get(HEADER_LEN..HEADER_LEN + length)
             .ok_or(Error::Truncated)?;
 
-        let mut key = [0u8; 16];
-        key[0..4].copy_from_slice(&MAGIC_COOKIE.to_be_bytes());
-        key[4..16].copy_from_slice(&tid);
+        let key = xor_key(&transaction_id);
 
         let mut attributes = Vec::new();
+        let mut ignored = Vec::new();
+        let mut scope = Scope::Open;
         let mut offset = 0usize;
         while offset < body.len() {
             if offset + 4 > body.len() {
@@ -268,7 +289,12 @@ impl Message {
                 return Err(Error::BadAttributeLength);
             }
             let value = &body[value_start..value_end];
-            attributes.push(Attribute::decode(attr_type, value, &key)?);
+            let attribute = Attribute::decode(attr_type, value, &key)?;
+            if scope.admit(attr_type) {
+                attributes.push(attribute);
+            } else {
+                ignored.push(attribute);
+            }
             let padded = value_len + (4 - (value_len % 4)) % 4;
             offset = value_start + padded;
         }
@@ -277,7 +303,8 @@ impl Message {
             message_type: MessageType::from_u16(raw_type),
             transaction_id,
             attributes,
-            raw: Some(bytes[..HEADER_LEN + length].to_vec()),
+            ignored,
+            raw: bytes[..HEADER_LEN + length].to_vec(),
         })
     }
 
@@ -322,14 +349,7 @@ impl Message {
     /// Returns [`Error::MalformedAttribute`] if no `FINGERPRINT` attribute is
     /// present, or [`Error::FingerprintMismatch`] on mismatch.
     pub fn verify_fingerprint(&self) -> Result<()> {
-        let owned;
-        let raw: &[u8] = match &self.raw {
-            Some(bytes) => bytes,
-            None => {
-                owned = self.encode();
-                &owned
-            }
-        };
+        let raw = self.raw.as_slice();
         let (value_start, value_len) = find_attribute(raw, types::FINGERPRINT)
             .ok_or(Error::MalformedAttribute("FINGERPRINT not present"))?;
         if value_len != 4 {
@@ -369,14 +389,7 @@ impl Message {
         key: &[u8],
         mac_fn: MacFn<'_>,
     ) -> Result<()> {
-        let owned;
-        let raw: &[u8] = match &self.raw {
-            Some(bytes) => bytes,
-            None => {
-                owned = self.encode();
-                &owned
-            }
-        };
+        let raw = self.raw.as_slice();
 
         let (value_start, value_len) = find_attribute(raw, attr_type)
             .ok_or(Error::MalformedAttribute("integrity attribute not present"))?;
@@ -399,8 +412,9 @@ impl Message {
     }
 }
 
-/// Scan the TLV body of a raw STUN message for the first attribute of
-/// `attr_type`, returning `(value_start, value_len)` offsets into `raw`.
+/// Scan the TLV body of a raw STUN message for the first processed attribute
+/// of `attr_type` (see [`Message::attributes`]), returning
+/// `(value_start, value_len)` offsets into `raw`.
 fn find_attribute(raw: &[u8], attr_type: u16) -> Option<(usize, usize)> {
     if raw.len() < HEADER_LEN {
         return None;
@@ -410,6 +424,7 @@ fn find_attribute(raw: &[u8], attr_type: u16) -> Option<(usize, usize)> {
     if end > raw.len() {
         return None;
     }
+    let mut scope = Scope::Open;
     let mut offset = HEADER_LEN;
     while offset + 4 <= end {
         let this_type = u16::from_be_bytes([raw[offset], raw[offset + 1]]);
@@ -418,7 +433,7 @@ fn find_attribute(raw: &[u8], attr_type: u16) -> Option<(usize, usize)> {
         if value_start + value_len > end {
             return None;
         }
-        if this_type == attr_type {
+        if scope.admit(this_type) && this_type == attr_type {
             return Some((value_start, value_len));
         }
         let padded = value_len + (4 - (value_len % 4)) % 4;
@@ -432,6 +447,26 @@ fn write_length(out: &mut [u8], length: usize) {
     let bytes = u16::try_from(length).unwrap_or(u16::MAX).to_be_bytes();
     out[2] = bytes[0];
     out[3] = bytes[1];
+}
+
+fn encode_prefix(
+    message_type: MessageType,
+    transaction_id: &TransactionId,
+    attributes: &[Attribute],
+    pending: usize,
+) -> Vec<u8> {
+    let key = xor_key(transaction_id);
+    let mut out = Vec::with_capacity(HEADER_LEN + 64);
+    out.extend_from_slice(&message_type.to_u16().to_be_bytes());
+    out.extend_from_slice(&[0, 0]);
+    out.extend_from_slice(&MAGIC_COOKIE.to_be_bytes());
+    out.extend_from_slice(transaction_id.as_bytes());
+    for attr in attributes {
+        attr.encode(&key, &mut out);
+    }
+    let length = out.len() - HEADER_LEN + pending;
+    write_length(&mut out, length);
+    out
 }
 
 /// Builder for [`Message`], handling integrity and fingerprint computation.
@@ -501,43 +536,36 @@ impl MessageBuilder {
     /// requested) are computed and appended in RFC-mandated order.
     #[must_use]
     pub fn build(self) -> Message {
-        let mut message = Message {
-            message_type: self.message_type,
-            transaction_id: self.transaction_id,
-            attributes: self.attributes,
-            raw: None,
-        };
-        let key = message.xor_key();
+        let message_type = self.message_type;
+        let transaction_id = self.transaction_id;
+        let mut wire = self.attributes;
 
         if let Some(mi_key) = &self.mi_sha1_key {
-            let mac = compute_integrity(&message, &key, 4 + integrity::SHA1_LEN, mi_key, &|k, d| {
-                integrity::hmac_sha1(k, d).to_vec()
-            });
-            let mut fixed = [0u8; integrity::SHA1_LEN];
-            fixed.copy_from_slice(&mac);
-            message.attributes.push(Attribute::MessageIntegrity(fixed));
+            let prefix = encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA1_LEN);
+            wire.push(Attribute::MessageIntegrity(integrity::hmac_sha1(mi_key, &prefix)));
         }
 
         if let Some(mi_key) = &self.mi_sha256_key {
-            let mac = compute_integrity(
-                &message,
-                &key,
-                4 + integrity::SHA256_LEN,
-                mi_key,
-                &|k, d| integrity::hmac_sha256(k, d).to_vec(),
-            );
-            message
-                .attributes
-                .push(Attribute::MessageIntegritySha256(mac));
+            let prefix =
+                encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA256_LEN);
+            let mac = integrity::hmac_sha256(mi_key, &prefix);
+            wire.push(Attribute::MessageIntegritySha256(mac.to_vec()));
         }
 
         if self.fingerprint {
-            let value = compute_fingerprint(&message, &key);
-            message.attributes.push(Attribute::Fingerprint(value));
+            let prefix = encode_prefix(message_type, &transaction_id, &wire, 8);
+            wire.push(Attribute::Fingerprint(fingerprint(&prefix)));
         }
 
-        message.raw = Some(message.encode());
-        message
+        let raw = encode_prefix(message_type, &transaction_id, &wire, 0);
+        let (attributes, ignored) = split_processed(wire);
+        Message {
+            message_type,
+            transaction_id,
+            attributes,
+            ignored,
+            raw,
+        }
     }
 
     /// Convenience: build and immediately encode to bytes.
@@ -545,36 +573,4 @@ impl MessageBuilder {
     pub fn build_and_encode(self) -> Vec<u8> {
         self.build().encode()
     }
-}
-
-/// Compute an integrity HMAC over the current attributes with the synthetic
-/// header length set to include the pending integrity attribute.
-fn compute_integrity(
-    message: &Message,
-    key: &XorKey,
-    attr_total_len: usize,
-    mac_key: &[u8],
-    mac_fn: MacFn<'_>,
-) -> Vec<u8> {
-    let mut prefix = Vec::with_capacity(HEADER_LEN + 64);
-    message.write_header(&mut prefix, 0);
-    for attr in &message.attributes {
-        attr.encode(key, &mut prefix);
-    }
-    let synthetic_len = (prefix.len() - HEADER_LEN) + attr_total_len;
-    write_length(&mut prefix, synthetic_len);
-    mac_fn(mac_key, &prefix)
-}
-
-/// Compute the `FINGERPRINT` value with the synthetic header length set to
-/// include the pending 8-byte fingerprint attribute.
-fn compute_fingerprint(message: &Message, key: &XorKey) -> u32 {
-    let mut prefix = Vec::with_capacity(HEADER_LEN + 64);
-    message.write_header(&mut prefix, 0);
-    for attr in &message.attributes {
-        attr.encode(key, &mut prefix);
-    }
-    let synthetic_len = (prefix.len() - HEADER_LEN) + 8;
-    write_length(&mut prefix, synthetic_len);
-    fingerprint(&prefix)
 }
