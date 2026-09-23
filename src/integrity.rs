@@ -35,8 +35,8 @@ pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; SHA256_LEN] {
     let symmetric = SymmetricKey::from_bytes(key.to_vec());
     let mut out = [0u8; SHA256_LEN];
     if let Ok(mac) = ck_hmac_sha256(data, &symmetric) {
-        if mac.len() == SHA256_LEN {
-            out.copy_from_slice(&mac);
+        if mac.as_bytes().len() == SHA256_LEN {
+            out.copy_from_slice(mac.as_bytes());
         }
     }
     out

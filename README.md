@@ -89,7 +89,7 @@ via the sibling `networkframework` crate.
 
 ## Minimum Supported Rust Version
 
-Rust **1.76**.
+Rust **1.82**.
 
 ## License
 

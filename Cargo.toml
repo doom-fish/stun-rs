@@ -2,7 +2,7 @@
 name = "stun-rs"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.76"
+rust-version = "1.82"
 license = "MIT OR Apache-2.0"
 description = "Pure-Rust STUN (RFC 5389 / RFC 8489) message codec with full ICE attribute coverage and a synchronous client over Network.framework UDP"
 authors = ["Per Johansson <per@doom.fish>"]
@@ -20,9 +20,8 @@ path = "src/lib.rs"
 crate-type = ["lib"]
 
 [dependencies]
-libc = "0.2"
-networkframework = { path = "../networkframework-rs" }
-cryptokit = { path = "../cryptokit-rs", package = "cryptokit-rs" }
+networkframework = { path = "../networkframework-rs", version = ">=0.14, <0.15" }
+cryptokit = { path = "../cryptokit-rs", package = "cryptokit-rs", version = ">=0.3, <0.4" }
 
 [[example]]
 name = "01_binding_request"

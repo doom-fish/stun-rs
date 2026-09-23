@@ -207,7 +207,7 @@ impl Attribute {
         out[type_pos + 3] = len_bytes[1];
         // Pad to a 4-byte boundary.
         let padding = (4 - (value_len % 4)) % 4;
-        out.extend(std::iter::repeat(0u8).take(padding));
+        out.extend(std::iter::repeat_n(0u8, padding));
     }
 
     /// Decode a single attribute value given its type, raw value bytes, and the
