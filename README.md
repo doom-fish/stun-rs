@@ -11,6 +11,14 @@ It is built for WebRTC peers and other ICE-compliant endpoints that need to
 build and parse STUN messages and discover their server-reflexive address
 through a NAT.
 
+The crate is not published to crates.io (`publish = false`); depend on it by
+path from a sibling checkout:
+
+```toml
+[dependencies]
+stun = { package = "stun-rs", path = "../stun-rs", version = "0.2" }
+```
+
 ## Features
 
 - **Message codec** — 20-byte header and TLV attributes with correct 4-byte
