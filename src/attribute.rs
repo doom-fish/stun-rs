@@ -43,6 +43,10 @@ pub const fn is_comprehension_required(attribute_type: u16) -> bool {
     attribute_type < COMPREHENSION_OPTIONAL_FLOOR
 }
 
+pub(crate) const fn valid_integrity_sha256_len(len: usize) -> bool {
+    len >= 16 && len <= 32 && len % 4 == 0
+}
+
 /// A decoded `ERROR-CODE` attribute (RFC 5389 §15.6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorCode {
@@ -230,7 +234,7 @@ impl Attribute {
                 Ok(Self::MessageIntegrity(mac))
             }
             types::MESSAGE_INTEGRITY_SHA256 => {
-                if value.is_empty() || value.len() > 32 {
+                if !valid_integrity_sha256_len(value.len()) {
                     return Err(Error::MalformedAttribute(
                         "MESSAGE-INTEGRITY-SHA256 length out of range",
                     ));

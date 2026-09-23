@@ -34,6 +34,8 @@ pub enum Error {
     Rng,
     #[allow(missing_docs)]
     Crypto(&'static str),
+    #[allow(missing_docs)]
+    BadMessageLength,
 }
 
 impl fmt::Display for Error {
@@ -55,6 +57,9 @@ impl fmt::Display for Error {
             Self::Network(msg) => write!(f, "network error: {msg}"),
             Self::Rng => f.write_str("secure RNG failed"),
             Self::Crypto(what) => write!(f, "platform crypto error: {what}"),
+            Self::BadMessageLength => {
+                f.write_str("STUN message length is not a multiple of 4 or exceeds 65535")
+            }
         }
     }
 }

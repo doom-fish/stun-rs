@@ -2,7 +2,9 @@
 //! type with its builder.
 
 use crate::address::XorKey;
-use crate::attribute::{types, Attribute};
+use crate::attribute::{
+    is_comprehension_required, types, valid_integrity_sha256_len, Attribute, ErrorCode,
+};
 use crate::error::{Error, Result};
 use crate::fingerprint::fingerprint;
 use crate::integrity::{self, constant_time_eq};
@@ -13,6 +15,8 @@ pub const MAGIC_COOKIE: u32 = 0x2112_A442;
 
 /// Fixed STUN header length in bytes.
 pub const HEADER_LEN: usize = 20;
+
+const FINGERPRINT_NOT_LAST: &str = "FINGERPRINT must be the last attribute";
 
 /// A keyed message-authentication function `(key, data) -> mac`.
 type MacFn<'a> = &'a dyn Fn(&[u8], &[u8]) -> Result<Vec<u8>>;
@@ -235,6 +239,29 @@ impl Message {
             .find(|a| a.attribute_type() == attribute_type)
     }
 
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn unknown_comprehension_required(&self) -> Vec<u16> {
+        let mut unknown = Vec::new();
+        for attribute in &self.attributes {
+            if let Attribute::Unknown { attribute_type, .. } = attribute {
+                if is_comprehension_required(*attribute_type) && !unknown.contains(attribute_type) {
+                    unknown.push(*attribute_type);
+                }
+            }
+        }
+        unknown
+    }
+
+    #[allow(missing_docs)]
+    #[must_use]
+    pub fn unknown_attribute_response(&self, unknown: &[u16]) -> MessageBuilder {
+        Self::builder(self.method(), Class::ErrorResponse)
+            .transaction_id(self.transaction_id)
+            .attribute(Attribute::ErrorCode(ErrorCode::new(420, "Unknown Attribute")))
+            .attribute(Attribute::UnknownAttributes(unknown.to_vec()))
+    }
+
     /// The on-the-wire bytes of this message: the bytes it was decoded from,
     /// or the encoding produced by [`MessageBuilder`].
     #[must_use]
@@ -257,6 +284,9 @@ impl Message {
             return Err(Error::BadMessageType);
         }
         let length = usize::from(u16::from_be_bytes([bytes[2], bytes[3]]));
+        if length % 4 != 0 {
+            return Err(Error::BadMessageLength);
+        }
         let cookie = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         if cookie != MAGIC_COOKIE {
             return Err(Error::BadMagicCookie);
@@ -274,8 +304,12 @@ impl Message {
         let mut attributes = Vec::new();
         let mut ignored = Vec::new();
         let mut scope = Scope::Open;
+        let mut fingerprint_seen = false;
         let mut offset = 0usize;
         while offset < body.len() {
+            if fingerprint_seen {
+                return Err(Error::MalformedAttribute(FINGERPRINT_NOT_LAST));
+            }
             if offset + 4 > body.len() {
                 return Err(Error::BadAttributeLength);
             }
@@ -290,6 +324,7 @@ impl Message {
             }
             let value = &body[value_start..value_end];
             let attribute = Attribute::decode(attr_type, value, &key)?;
+            fingerprint_seen = attr_type == types::FINGERPRINT;
             if scope.admit(attr_type) {
                 attributes.push(attribute);
             } else {
@@ -455,7 +490,7 @@ fn encode_prefix(
     transaction_id: &TransactionId,
     attributes: &[Attribute],
     pending: usize,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let key = xor_key(transaction_id);
     let mut out = Vec::with_capacity(HEADER_LEN + 64);
     out.extend_from_slice(&message_type.to_u16().to_be_bytes());
@@ -466,15 +501,35 @@ fn encode_prefix(
         attr.encode(&key, &mut out);
     }
     let length = out.len() - HEADER_LEN + pending;
+    if length > usize::from(u16::MAX) {
+        return Err(Error::BadMessageLength);
+    }
     write_length(&mut out, length);
-    out
+    Ok(out)
+}
+
+fn check_structure(wire: &[Attribute]) -> Result<()> {
+    for (position, attribute) in wire.iter().enumerate() {
+        match attribute {
+            Attribute::Fingerprint(_) if position + 1 != wire.len() => {
+                return Err(Error::MalformedAttribute(FINGERPRINT_NOT_LAST));
+            }
+            Attribute::MessageIntegritySha256(mac) if !valid_integrity_sha256_len(mac.len()) => {
+                return Err(Error::MalformedAttribute(
+                    "MESSAGE-INTEGRITY-SHA256 length out of range",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Builder for [`Message`], handling integrity and fingerprint computation.
 #[derive(Debug, Clone)]
 pub struct MessageBuilder {
     message_type: MessageType,
-    transaction_id: TransactionId,
+    transaction_id: Option<TransactionId>,
     attributes: Vec<Attribute>,
     mi_sha1_key: Option<Vec<u8>>,
     mi_sha256_key: Option<Vec<u8>>,
@@ -488,7 +543,7 @@ impl MessageBuilder {
     pub fn new(method: Method, class: Class) -> Self {
         Self {
             message_type: MessageType::new(method, class),
-            transaction_id: TransactionId::random(),
+            transaction_id: None,
             attributes: Vec::new(),
             mi_sha1_key: None,
             mi_sha256_key: None,
@@ -499,7 +554,7 @@ impl MessageBuilder {
     /// Set the transaction ID (defaults to a fresh random one).
     #[must_use]
     pub fn transaction_id(mut self, transaction_id: TransactionId) -> Self {
-        self.transaction_id = transaction_id;
+        self.transaction_id = Some(transaction_id);
         self
     }
 
@@ -537,27 +592,32 @@ impl MessageBuilder {
     /// requested) are computed and appended in RFC-mandated order.
     pub fn build(self) -> Result<Message> {
         let message_type = self.message_type;
-        let transaction_id = self.transaction_id;
+        let transaction_id = match self.transaction_id {
+            Some(transaction_id) => transaction_id,
+            None => TransactionId::try_random()?,
+        };
         let mut wire = self.attributes;
 
         if let Some(mi_key) = &self.mi_sha1_key {
-            let prefix = encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA1_LEN);
+            let prefix =
+                encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA1_LEN)?;
             wire.push(Attribute::MessageIntegrity(integrity::hmac_sha1(mi_key, &prefix)));
         }
 
         if let Some(mi_key) = &self.mi_sha256_key {
             let prefix =
-                encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA256_LEN);
+                encode_prefix(message_type, &transaction_id, &wire, 4 + integrity::SHA256_LEN)?;
             let mac = integrity::hmac_sha256(mi_key, &prefix)?;
             wire.push(Attribute::MessageIntegritySha256(mac.to_vec()));
         }
 
         if self.fingerprint {
-            let prefix = encode_prefix(message_type, &transaction_id, &wire, 8);
+            let prefix = encode_prefix(message_type, &transaction_id, &wire, 8)?;
             wire.push(Attribute::Fingerprint(fingerprint(&prefix)));
         }
 
-        let raw = encode_prefix(message_type, &transaction_id, &wire, 0);
+        check_structure(&wire)?;
+        let raw = encode_prefix(message_type, &transaction_id, &wire, 0)?;
         let (attributes, ignored) = split_processed(wire);
         Ok(Message {
             message_type,
