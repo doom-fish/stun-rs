@@ -1,6 +1,8 @@
 //! Short-term and long-term credential key derivation (RFC 5389 §15.4,
 //! RFC 8489 §9).
 
+use zeroize::{Zeroize, Zeroizing};
+
 use crate::ffi::commoncrypto;
 
 /// Derive the HMAC key for the **short-term credential** mechanism.
@@ -13,8 +15,8 @@ use crate::ffi::commoncrypto;
 /// We therefore use the raw password bytes and document the assumption here:
 /// **non-ASCII passwords are passed through unchanged rather than SASLprep'd.**
 #[must_use]
-pub fn short_term_key(password: &str) -> Vec<u8> {
-    password.as_bytes().to_vec()
+pub fn short_term_key(password: &str) -> Zeroizing<Vec<u8>> {
+    Zeroizing::new(password.as_bytes().to_vec())
 }
 
 /// Derive the HMAC key for the **long-term credential** mechanism.
@@ -23,12 +25,17 @@ pub fn short_term_key(password: &str) -> Vec<u8> {
 /// MD5 is not part of CryptoKit's safe surface, so it is computed via
 /// CommonCrypto (see [`crate::ffi::commoncrypto`]).
 #[must_use]
-pub fn long_term_key(username: &str, realm: &str, password: &str) -> [u8; 16] {
-    let mut input = Vec::with_capacity(username.len() + realm.len() + password.len() + 2);
+pub fn long_term_key(username: &str, realm: &str, password: &str) -> Zeroizing<Vec<u8>> {
+    let mut input = Zeroizing::new(Vec::with_capacity(
+        username.len() + realm.len() + password.len() + 2,
+    ));
     input.extend_from_slice(username.as_bytes());
     input.push(b':');
     input.extend_from_slice(realm.as_bytes());
     input.push(b':');
     input.extend_from_slice(password.as_bytes());
-    commoncrypto::md5(&input)
+    let mut digest = commoncrypto::md5(&input);
+    let key = Zeroizing::new(digest.to_vec());
+    digest.zeroize();
+    key
 }

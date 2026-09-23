@@ -8,7 +8,7 @@
 //! system functions here. Both symbols live in `libSystem`, which every
 //! macOS binary already links against.
 
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 
 /// `CCHmacAlgorithm` value for HMAC-SHA1 (`kCCHmacAlgSHA1`, the first enumerator).
 const KCC_HMAC_ALG_SHA1: u32 = 0;
@@ -19,9 +19,20 @@ const MD5_DIGEST_LEN: usize = 16;
 /// Length in bytes of a SHA-1 / HMAC-SHA1 digest.
 const SHA1_DIGEST_LEN: usize = 20;
 
+const MD5_UPDATE_CHUNK: usize = 1 << 30;
+
+#[repr(C)]
+struct Md5Context {
+    state: [u32; 4],
+    bit_count: [u32; 2],
+    block: [u32; 16],
+    used: c_int,
+}
+
 extern "C" {
-    /// `unsigned char *CC_MD5(const void *data, CC_LONG len, unsigned char *md);`
-    fn CC_MD5(data: *const c_void, len: u32, md: *mut u8) -> *mut u8;
+    fn CC_MD5_Init(context: *mut Md5Context) -> c_int;
+    fn CC_MD5_Update(context: *mut Md5Context, data: *const c_void, len: u32) -> c_int;
+    fn CC_MD5_Final(md: *mut u8, context: *mut Md5Context) -> c_int;
 
     /// `void CCHmac(CCHmacAlgorithm algorithm, const void *key, size_t keyLength,
     ///             const void *data, size_t dataLength, void *macOut);`
@@ -43,10 +54,18 @@ extern "C" {
 #[must_use]
 pub fn md5(data: &[u8]) -> [u8; MD5_DIGEST_LEN] {
     let mut out = [0u8; MD5_DIGEST_LEN];
-    // CC_LONG is u32; STUN credential inputs are tiny, so the cast is safe.
-    let len = u32::try_from(data.len()).expect("md5 input too large");
+    let mut context = Md5Context {
+        state: [0; 4],
+        bit_count: [0; 2],
+        block: [0; 16],
+        used: 0,
+    };
     unsafe {
-        CC_MD5(data.as_ptr().cast(), len, out.as_mut_ptr());
+        CC_MD5_Init(&raw mut context);
+        for chunk in data.chunks(MD5_UPDATE_CHUNK) {
+            CC_MD5_Update(&raw mut context, chunk.as_ptr().cast(), chunk.len() as u32);
+        }
+        CC_MD5_Final(out.as_mut_ptr(), &raw mut context);
     }
     out
 }

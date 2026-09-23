@@ -22,6 +22,7 @@ crate-type = ["lib"]
 [dependencies]
 networkframework = { path = "../networkframework-rs", version = ">=0.14, <0.15" }
 cryptokit = { path = "../cryptokit-rs", package = "cryptokit-rs", version = ">=0.3, <0.4" }
+zeroize = ">=1.6, <1.9"
 
 [[example]]
 name = "01_binding_request"

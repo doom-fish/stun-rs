@@ -1,6 +1,10 @@
 //! STUN message header, method/class encoding, and the top-level [`Message`]
 //! type with its builder.
 
+use core::fmt;
+
+use zeroize::Zeroizing;
+
 use crate::address::XorKey;
 use crate::attribute::{
     is_comprehension_required, types, valid_integrity_sha256_len, Attribute, ErrorCode,
@@ -526,14 +530,27 @@ fn check_structure(wire: &[Attribute]) -> Result<()> {
 }
 
 /// Builder for [`Message`], handling integrity and fingerprint computation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MessageBuilder {
     message_type: MessageType,
     transaction_id: Option<TransactionId>,
     attributes: Vec<Attribute>,
-    mi_sha1_key: Option<Vec<u8>>,
-    mi_sha256_key: Option<Vec<u8>>,
+    mi_sha1_key: Option<Zeroizing<Vec<u8>>>,
+    mi_sha256_key: Option<Zeroizing<Vec<u8>>>,
     fingerprint: bool,
+}
+
+impl fmt::Debug for MessageBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MessageBuilder")
+            .field("message_type", &self.message_type)
+            .field("transaction_id", &self.transaction_id)
+            .field("attributes", &self.attributes)
+            .field("message_integrity_sha1", &self.mi_sha1_key.is_some())
+            .field("message_integrity_sha256", &self.mi_sha256_key.is_some())
+            .field("fingerprint", &self.fingerprint)
+            .finish()
+    }
 }
 
 impl MessageBuilder {
@@ -569,7 +586,7 @@ impl MessageBuilder {
     /// computed with `key`.
     #[must_use]
     pub fn with_message_integrity_sha1(mut self, key: &[u8]) -> Self {
-        self.mi_sha1_key = Some(key.to_vec());
+        self.mi_sha1_key = Some(Zeroizing::new(key.to_vec()));
         self
     }
 
@@ -577,7 +594,7 @@ impl MessageBuilder {
     /// computed with `key`.
     #[must_use]
     pub fn with_message_integrity_sha256(mut self, key: &[u8]) -> Self {
-        self.mi_sha256_key = Some(key.to_vec());
+        self.mi_sha256_key = Some(Zeroizing::new(key.to_vec()));
         self
     }
 
