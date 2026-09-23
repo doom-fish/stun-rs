@@ -13,22 +13,27 @@
 
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
-use networkframework::udp::UdpClient;
+use networkframework::{Connection, ConnectionParameters, NetworkError};
 
 use crate::attribute::{types, Attribute};
 use crate::error::{Error, Result};
 use crate::message::{Class, Message, Method};
-use crate::transaction::{timeout_error, RetransmitSchedule, TransactionId};
+use crate::transaction::{RetransmitSchedule, TransactionId, DEFAULT_RTO};
 
 /// Default STUN port (RFC 5389 §9).
 pub const DEFAULT_STUN_PORT: u16 = 3478;
 
 /// Maximum UDP datagram size we are willing to receive.
 const MAX_DATAGRAM: usize = 1500;
+
+const RFC3489_RESPONSE_ATTRIBUTES: [u16; 2] = [0x0004, 0x0005];
+
+type Datagram = std::result::Result<Vec<u8>, NetworkError>;
 
 /// A server-reflexive transport address learned from a STUN Binding response.
 pub type MappedAddress = SocketAddr;
@@ -135,10 +140,21 @@ impl FromStr for Endpoint {
 }
 
 /// A synchronous STUN client.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct StunClient {
     software: Option<String>,
     fingerprint: bool,
+    rto: Duration,
+}
+
+impl Default for StunClient {
+    fn default() -> Self {
+        Self {
+            software: None,
+            fingerprint: false,
+            rto: DEFAULT_RTO,
+        }
+    }
 }
 
 impl StunClient {
@@ -149,6 +165,7 @@ impl StunClient {
         Self {
             software: Some(concat!("doomfish-stun/", env!("CARGO_PKG_VERSION")).to_owned()),
             fingerprint: true,
+            rto: DEFAULT_RTO,
         }
     }
 
@@ -166,50 +183,53 @@ impl StunClient {
         self
     }
 
+    #[allow(missing_docs)]
+    #[must_use]
+    pub const fn rto(mut self, rto: Duration) -> Self {
+        self.rto = rto;
+        self
+    }
+
     /// Perform a STUN Binding transaction against `server` and return the
     /// reflexive transport address.
     ///
-    /// Retransmits per RFC 5389 §7.2.1 (initial RTO 500 ms, doubling) until a
-    /// matching response arrives or the schedule is exhausted.
+    /// Retransmits per RFC 5389 §7.2.1 (initial RTO 500 ms unless set with
+    /// [`StunClient::rto`], doubling) until a response to this transaction
+    /// arrives or the schedule is exhausted.
     ///
     /// # Errors
     ///
-    /// * [`Error::Network`] if the socket cannot be opened or a send fails.
+    /// * [`Error::Network`] if the socket cannot be opened or a send or
+    ///   receive fails.
     /// * [`Error::Timeout`] if no matching response arrives in time.
+    /// * [`Error::ErrorResponse`] if the server answers with an error response.
+    /// * [`Error::UnknownAttributes`] if the response carries
+    ///   comprehension-required attributes this crate does not understand.
     /// * Decoding errors if the response is malformed.
     pub fn bind(&self, server: &Endpoint) -> Result<MappedAddress> {
-        let transaction_id = TransactionId::random();
+        let transaction_id = TransactionId::try_random()?;
         let request = self.build_request(transaction_id)?;
 
-        let socket = UdpClient::connect(server.host(), server.port())
+        let parameters = ConnectionParameters::udp().map_err(|e| Error::Network(e.to_string()))?;
+        let socket = Connection::connect_with_parameters(server.host(), server.port(), &parameters)
             .map_err(|e| Error::Network(e.to_string()))?;
         let socket = Arc::new(socket);
 
-        let (tx, rx) = mpsc::channel::<Vec<u8>>();
-        spawn_receiver(Arc::clone(&socket), tx);
+        let (tx, rx) = mpsc::channel();
+        let receiver = {
+            let socket = Arc::clone(&socket);
+            thread::Builder::new()
+                .name("stun-bind-receiver".to_owned())
+                .spawn(move || receive_datagrams(&socket, &tx))
+                .map_err(|e| Error::Network(e.to_string()))?
+        };
 
-        // Send once up front, then resend on each elapsed retransmit interval.
-        socket
-            .send(&request)
-            .map_err(|e| Error::Network(e.to_string()))?;
-
-        for wait in RetransmitSchedule::new() {
-            match rx.recv_timeout(wait) {
-                Ok(datagram) => {
-                    if let Some(addr) = match_response(&datagram, &transaction_id) {
-                        return Ok(addr);
-                    }
-                    // Not our datagram; keep waiting within the same window.
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    socket
-                        .send(&request)
-                        .map_err(|e| Error::Network(e.to_string()))?;
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
+        let outcome = run_transaction(&socket, &rx, &request, &transaction_id, self.rto);
+        socket.force_cancel();
+        if receiver.join().is_err() {
+            return Err(Error::Network("STUN receiver thread panicked".to_owned()));
         }
-        Err(timeout_error())
+        outcome
     }
 
     /// Build the Binding request bytes for a given transaction ID.
@@ -225,33 +245,87 @@ impl StunClient {
     }
 }
 
-/// Spawn a detached receiver thread that forwards inbound datagrams.
-///
-/// The thread terminates when the socket is closed (the last [`Arc`] is
-/// dropped) or a receive fails. On a successful or timed-out [`StunClient::bind`]
-/// the caller drops its `Arc`; the next inbound datagram or socket teardown
-/// unblocks the thread.
-fn spawn_receiver(socket: Arc<UdpClient>, tx: mpsc::Sender<Vec<u8>>) {
-    thread::spawn(move || {
-        while let Ok(datagram) = socket.receive(MAX_DATAGRAM) {
-            if tx.send(datagram).is_err() {
-                break;
+fn receive_datagrams(socket: &Connection, datagrams: &Sender<Datagram>) {
+    let error = loop {
+        match socket.receive_message(MAX_DATAGRAM) {
+            Ok(content) => {
+                if datagrams.send(Ok(content.data)).is_err() {
+                    return;
+                }
             }
+            Err(NetworkError::MessageTooLarge { .. }) => {}
+            Err(error) => break error,
         }
-    });
+    };
+    let _ = datagrams.send(Err(error));
 }
 
-/// Decode a datagram and, if it is the matching Binding response, extract the
-/// reflexive address.
-fn match_response(datagram: &[u8], expected: &TransactionId) -> Option<MappedAddress> {
+fn run_transaction(
+    socket: &Connection,
+    datagrams: &Receiver<Datagram>,
+    request: &[u8],
+    transaction_id: &TransactionId,
+    rto: Duration,
+) -> Result<MappedAddress> {
+    let mut schedule = RetransmitSchedule::with_rto(rto).peekable();
+    socket
+        .send(request)
+        .map_err(|e| Error::Network(e.to_string()))?;
+    while let Some(wait) = schedule.next() {
+        let started = Instant::now();
+        while let Some(remaining) = wait.checked_sub(started.elapsed()) {
+            match datagrams.recv_timeout(remaining) {
+                Ok(Ok(datagram)) => {
+                    if let Some(outcome) = match_response(&datagram, transaction_id) {
+                        return outcome;
+                    }
+                }
+                Ok(Err(error)) => return Err(Error::Network(error.to_string())),
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(Error::Network("STUN receiver stopped".to_owned()));
+                }
+            }
+        }
+        if schedule.peek().is_some() {
+            socket
+                .send(request)
+                .map_err(|e| Error::Network(e.to_string()))?;
+        }
+    }
+    Err(Error::Timeout)
+}
+
+/// Decode a datagram and, if it is the response to this Binding transaction,
+/// return the transaction's outcome.
+fn match_response(datagram: &[u8], expected: &TransactionId) -> Option<Result<MappedAddress>> {
     let message = Message::decode(datagram).ok()?;
     if message.transaction_id() != expected || message.method() != Method::Binding {
         return None;
     }
-    if !matches!(message.class(), Class::SuccessResponse) {
+    if !matches!(message.class(), Class::SuccessResponse | Class::ErrorResponse) {
         return None;
     }
-    reflexive_address(&message)
+    if message.get(types::FINGERPRINT).is_some() && message.verify_fingerprint().is_err() {
+        return None;
+    }
+    let unknown: Vec<u16> = message
+        .unknown_comprehension_required()
+        .into_iter()
+        .filter(|attribute_type| !RFC3489_RESPONSE_ATTRIBUTES.contains(attribute_type))
+        .collect();
+    if !unknown.is_empty() {
+        return Some(Err(Error::UnknownAttributes(unknown)));
+    }
+    if message.class() == Class::ErrorResponse {
+        return Some(Err(match message.get(types::ERROR_CODE) {
+            Some(Attribute::ErrorCode(code)) => Error::ErrorResponse(code.clone()),
+            _ => Error::MalformedAttribute("STUN error response without ERROR-CODE"),
+        }));
+    }
+    Some(reflexive_address(&message).ok_or(Error::MalformedAttribute(
+        "Binding success response without a mapped address",
+    )))
 }
 
 /// Pull the reflexive address out of a response, preferring the XOR variant.

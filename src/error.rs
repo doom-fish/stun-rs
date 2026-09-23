@@ -36,6 +36,10 @@ pub enum Error {
     Crypto(&'static str),
     #[allow(missing_docs)]
     BadMessageLength,
+    #[allow(missing_docs)]
+    ErrorResponse(crate::attribute::ErrorCode),
+    #[allow(missing_docs)]
+    UnknownAttributes(Vec<u16>),
 }
 
 impl fmt::Display for Error {
@@ -60,6 +64,13 @@ impl fmt::Display for Error {
             Self::BadMessageLength => {
                 f.write_str("STUN message length is not a multiple of 4 or exceeds 65535")
             }
+            Self::ErrorResponse(code) => {
+                write!(f, "STUN error response {}: {}", code.code(), code.reason)
+            }
+            Self::UnknownAttributes(types) => write!(
+                f,
+                "STUN response carries unknown comprehension-required attributes {types:04x?}"
+            ),
         }
     }
 }

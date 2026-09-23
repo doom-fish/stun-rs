@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::rng;
 
 /// Length of a STUN transaction ID in bytes (96 bits, RFC 5389 §6).
@@ -75,26 +75,26 @@ impl core::fmt::Display for TransactionId {
 pub const DEFAULT_RTO: Duration = Duration::from_millis(500);
 
 /// Default number of retransmissions before giving up.
-pub const DEFAULT_MAX_RETRANSMITS: u32 = 9;
+pub const DEFAULT_MAX_RETRANSMITS: u32 = 6;
 
-/// The hard cap on total transaction time, expressed as a multiple of the RTO
-/// (RFC 5389 §7.2.1 gives `39.5 * RTO`).
-pub const TOTAL_TIMEOUT_RTO_MULTIPLIER: f64 = 39.5;
+#[allow(missing_docs)]
+pub const FINAL_WAIT_RTO_MULTIPLIER: u32 = 16;
 
-/// Iterator over the per-attempt wait durations of a STUN transaction.
+/// Iterator over the per-request wait durations of a STUN transaction
+/// (RFC 5389 §7.2.1).
 ///
-/// The first attempt waits one RTO; each subsequent attempt doubles the wait
-/// (`RTO * 2^n`). Iteration stops after [`DEFAULT_MAX_RETRANSMITS`] waits or
-/// once the cumulative time reaches `39.5 * RTO`, whichever comes first. The
-/// caller sends the request once up front and then resends each time the
-/// yielded duration elapses without a response.
+/// The first request waits one RTO and each retransmission doubles the wait
+/// (`RTO * 2^n`); after the last of [`DEFAULT_MAX_RETRANSMITS`]
+/// retransmissions the client waits [`FINAL_WAIT_RTO_MULTIPLIER`] RTOs, so a
+/// 500 ms RTO sends requests at 0, 500, 1500, 3500, 7500, 15500 and 31500 ms
+/// and gives up at 39.5 s. The caller sends the request once up front and,
+/// each time a yielded duration elapses without a response, resends it if
+/// another duration follows.
 #[derive(Debug, Clone)]
 pub struct RetransmitSchedule {
     rto: Duration,
     attempt: u32,
     max_retransmits: u32,
-    elapsed: Duration,
-    total_budget: Duration,
 }
 
 impl RetransmitSchedule {
@@ -106,14 +106,11 @@ impl RetransmitSchedule {
 
     /// Create a schedule with a custom initial RTO.
     #[must_use]
-    pub fn with_rto(rto: Duration) -> Self {
-        let total_budget = rto.mul_f64(TOTAL_TIMEOUT_RTO_MULTIPLIER);
+    pub const fn with_rto(rto: Duration) -> Self {
         Self {
             rto,
             attempt: 0,
             max_retransmits: DEFAULT_MAX_RETRANSMITS,
-            elapsed: Duration::ZERO,
-            total_budget,
         }
     }
 }
@@ -128,14 +125,15 @@ impl Iterator for RetransmitSchedule {
     type Item = Duration;
 
     fn next(&mut self) -> Option<Duration> {
-        if self.attempt > self.max_retransmits || self.elapsed >= self.total_budget {
+        if self.attempt > self.max_retransmits {
             return None;
         }
-        let wait = self.rto.saturating_mul(1u32 << self.attempt.min(31));
-        // Clamp the final wait so the total never exceeds the budget.
-        let remaining = self.total_budget.saturating_sub(self.elapsed);
-        let wait = wait.min(remaining);
-        self.elapsed += wait;
+        let multiplier = if self.attempt == self.max_retransmits {
+            FINAL_WAIT_RTO_MULTIPLIER
+        } else {
+            1u32 << self.attempt.min(31)
+        };
+        let wait = self.rto.saturating_mul(multiplier);
         self.attempt += 1;
         if wait.is_zero() {
             None
@@ -143,10 +141,4 @@ impl Iterator for RetransmitSchedule {
             Some(wait)
         }
     }
-}
-
-/// Convert a [`crate::error::Error`] for a timed-out transaction.
-#[must_use]
-pub(crate) fn timeout_error() -> Error {
-    Error::Timeout
 }
