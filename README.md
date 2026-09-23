@@ -20,7 +20,15 @@ through a NAT.
   IPv6.
 - **Integrity** — `MESSAGE-INTEGRITY` (HMAC-SHA1) and
   `MESSAGE-INTEGRITY-SHA256`, computed and verified over the exact wire bytes
-  (RFC 5389 §15.4 / RFC 8489 §14.5).
+  (RFC 5389 §15.4 / RFC 8489 §14.5). Attributes that follow an integrity
+  attribute are not covered by it, so `Message::get` and
+  `Message::attributes` leave them out (RFC 8489 §9); they are available
+  through `Message::ignored_attributes`.
+- **Validation** — the message length must be a multiple of 4, `FINGERPRINT`
+  must be the last attribute, and `MESSAGE-INTEGRITY-SHA256` must be 16–32
+  bytes. `Message::unknown_comprehension_required` and
+  `Message::unknown_attribute_response` implement the 420 (Unknown
+  Attribute) handling.
 - **Fingerprint** — `FINGERPRINT` (CRC-32) with a built-in, dependency-free
   CRC-32 implementation.
 - **Credentials** — short-term and long-term key derivation
@@ -28,13 +36,18 @@ through a NAT.
 - **ICE attributes** — `PRIORITY`, `USE-CANDIDATE`, `ICE-CONTROLLED`, and
   `ICE-CONTROLLING`.
 - **Client** — a synchronous [`StunClient`] over Network.framework UDP with
-  RFC 5389 retransmission (RTO doubling, 7 retransmits).
+  RFC 5389 retransmission: seven requests, the RTO (500 ms by default,
+  `StunClient::rto`) doubling each time, and a final wait of 16 RTOs
+  (39.5 s in total). Unrelated datagrams don't count against the schedule,
+  error responses end the transaction at once, and the receiver thread and
+  socket are shut down before `bind` returns.
 - **RFC 5769 verified** — every canonical test vector from RFC 5769 is checked
   in the test suite.
 
 Cryptography is provided entirely by Apple system libraries — HMAC-SHA256 via
 CryptoKit, and HMAC-SHA1 / MD5 via CommonCrypto — and the transaction-ID RNG
-uses `SecRandomCopyBytes`. There are **no third-party runtime dependencies**.
+uses `SecRandomCopyBytes`. The only third-party runtime dependency is
+`zeroize`, which wipes integrity keys on drop.
 
 ## Quick start
 
