@@ -222,7 +222,7 @@ fn unknown_comprehension_required_attribute_fails_the_transaction() {
 }
 
 #[test]
-fn rfc3489_source_and_changed_address_are_tolerated() {
+fn reserved_rfc3489_attributes_are_ignored() {
     let (socket, endpoint) = server();
     let server = answer_with(socket, |socket, request, peer| {
         let legacy_address = vec![0, 1, 0x0d, 0x96, 192, 0, 2, 1];
@@ -232,11 +232,19 @@ fn rfc3489_source_and_changed_address_are_tolerated() {
             vec![
                 Attribute::MappedAddress(peer),
                 Attribute::Unknown {
+                    attribute_type: 0x0002,
+                    value: legacy_address.clone(),
+                },
+                Attribute::Unknown {
                     attribute_type: 0x0004,
                     value: legacy_address.clone(),
                 },
                 Attribute::Unknown {
                     attribute_type: 0x0005,
+                    value: legacy_address.clone(),
+                },
+                Attribute::Unknown {
+                    attribute_type: 0x000b,
                     value: legacy_address,
                 },
             ],

@@ -31,7 +31,7 @@ pub const DEFAULT_STUN_PORT: u16 = 3478;
 /// Maximum UDP datagram size we are willing to receive.
 const MAX_DATAGRAM: usize = 1500;
 
-const RFC3489_RESPONSE_ATTRIBUTES: [u16; 2] = [0x0004, 0x0005];
+const RESERVED_ATTRIBUTES: [u16; 7] = [0x0000, 0x0002, 0x0003, 0x0004, 0x0005, 0x0007, 0x000B];
 
 type Datagram = std::result::Result<Vec<u8>, NetworkError>;
 
@@ -312,7 +312,7 @@ fn match_response(datagram: &[u8], expected: &TransactionId) -> Option<Result<Ma
     let unknown: Vec<u16> = message
         .unknown_comprehension_required()
         .into_iter()
-        .filter(|attribute_type| !RFC3489_RESPONSE_ATTRIBUTES.contains(attribute_type))
+        .filter(|attribute_type| !RESERVED_ATTRIBUTES.contains(attribute_type))
         .collect();
     if !unknown.is_empty() {
         return Some(Err(Error::UnknownAttributes(unknown)));
