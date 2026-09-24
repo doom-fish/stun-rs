@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and only when none was set.
 - COVERAGE.md said ALTERNATE-SERVER was decoded as `Unknown`, and the README
   promised 7 retransmits. Both are corrected.
+- The README states that binaries need macOS 14 or later, the deployment
+  target of networkframework's Swift bridge; cryptokit-rs 0.3 also links
+  security-rs and apple-cf, whose Swift bridges target macOS 12 and 13. 0.1.0
+  had the same requirement, and the README claimed other Apple platforms,
+  which none of the Swift bridges build for.
 
 ### Changed
 

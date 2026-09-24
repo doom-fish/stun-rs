@@ -105,9 +105,11 @@ STUN_LIVE_TESTS=1 cargo run --example 02_stun_query -- stun:stun.l.google.com:19
 
 ## Platform
 
-This crate targets **macOS** (and other Apple platforms): it links against
-`Security`, CommonCrypto (in `libSystem`), and uses Network.framework for UDP
-via the sibling `networkframework` crate.
+This crate targets **macOS**: it links against `Security`, CommonCrypto (in
+`libSystem`), and uses Network.framework for UDP via the sibling
+`networkframework` crate. Binaries need macOS 14 or later, the deployment
+target of `networkframework`'s Swift bridge. The `cryptokit` dependency links
+`security-rs` and `apple-cf`, whose Swift bridges target macOS 12 and 13.
 
 ## Minimum Supported Rust Version
 
